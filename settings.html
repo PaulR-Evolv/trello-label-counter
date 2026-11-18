@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Label Counter Settings</title>
+  <link rel="stylesheet" href="https://p.trellocdn.com/power-up.min.css" />
+  <script src="https://p.trellocdn.com/power-up.min.js"></script>
+  <style>
+    body { padding: 12px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .hint { font-size: 12px; color: #5e6c84; margin-bottom: 10px; }
+    .label-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid #ebecf0;
+    }
+    .label-info { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+    .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+    .label-name {
+      font-size: 13px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .prefix-input {
+      width: 90px;
+      padding: 4px 6px;
+      font-size: 12px;
+      margin: 0;
+    }
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div id="content">
+    <div class="hint">Check the labels to track and set their short banner text:</div>
+    <div id="label-list">Loading board labels...</div>
+    <div class="actions">
+      <button id="save-btn" class="mod-primary">Save Settings</button>
+    </div>
+  </div>
+
+  <script>
+    /* global TrelloPowerUp */
+    var t = TrelloPowerUp.iframe();
+
+    var COLOR_MAP = {
+      green: '#61bd4f', yellow: '#f2d600', orange: '#ff9f1a', red: '#eb5a46',
+      purple: '#c377e0', blue: '#0079bf', sky: '#00c2e0', lime: '#51e898',
+      pink: '#ff78cb', black: '#344563'
+    };
+
+    function getHexColor(trelloColor) {
+      if (!trelloColor) return '#b3bac5';
+      var base = trelloColor.replace(/_(dark|light)$/, '');
+      return COLOR_MAP[base] || '#b3bac5';
+    }
+
+    function defaultPrefix(name) {
+      if (!name) return 'Label';
+      return name.trim().split(/\s+/)[0];
+    }
+
+    Promise.all([
+      t.board('labels'),
+      t.get('board', 'shared', 'labelConfig')
+    ]).then(function ([board, savedConfig]) {
+      var config = savedConfig || {};
+      var container = document.getElementById('label-list');
+      container.innerHTML = '';
+
+      var namedLabels = board.labels.filter(function (l) {
+        return l.name && l.name.trim().length > 0;
+      });
+
+      if (namedLabels.length === 0) {
+        container.innerHTML = '<p class="hint">No named labels found on this board yet. Create labels in Trello first, then reopen this menu.</p>';
+        t.sizeTo('#content');
+        return;
+      }
+
+      namedLabels.forEach(function (label) {
+        var isChecked = !!(config[label.id] && config[label.id].enabled);
+        var prefixVal = (config[label.id] && config[label.id].prefix) || defaultPrefix(label.name);
+
+        var row = document.createElement('div');
+        row.className = 'label-row';
+        row.innerHTML =
+          '<label class="label-info">' +
+            '<input type="checkbox" data-id="' + label.id + '" ' + (isChecked ? 'checked' : '') + ' />' +
+            '<span class="swatch" style="background:' + getHexColor(label.color) + '"></span>' +
+            '<span class="label-name" title="' + label.name + '">' + label.name + '</span>' +
+          '</label>' +
+          '<input type="text" class="prefix-input" data-prefix-for="' + label.id + '" value="' + prefixVal + '" placeholder="Banner text" />';
+
+        container.appendChild(row);
+      });
+
+      t.sizeTo('#content');
+    });
+
+    document.getElementById('save-btn').addEventListener('click', function () {
+      var newConfig = {};
+      var checkboxes = document.querySelectorAll('input[type="checkbox"][data-id]');
+
+      checkboxes.forEach(function (cb) {
+        var id = cb.getAttribute('data-id');
+        var prefixInput = document.querySelector('input[data-prefix-for="' + id + '"]');
+        newConfig[id] = {
+          enabled: cb.checked,
+          prefix: prefixInput ? prefixInput.value.trim() : ''
+        };
+      });
+
+      t.set('board', 'shared', 'labelConfig', newConfig).then(function () {
+        return t.closePopup();
+      });
+    });
+  </script>
+</body>
+</html>
