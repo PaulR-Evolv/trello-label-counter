@@ -1,6 +1,7 @@
 /* global TrelloPowerUp */
 
 var TRELLO_DEFAULT_ICON = 'https://p.trellocdn.com/apple-touch-icon-152x152-precomposed.png';
+var lastSyncByCard = {};
 
 function formatLabelPrefix(labelName) {
   if (!labelName) return 'Label';
@@ -20,6 +21,60 @@ function openSettingsPopup(t) {
     url: './settings.html',
     height: 420
   });
+}
+
+// Computes ONLY the enabled, non-zero badges for a given list
+function computeVisibleBadges(listId, currentCardId, boardLabels, labelConfig, allCards) {
+  var config = labelConfig || {};
+  var namedLabels = (boardLabels || []).filter(function (l) {
+    return l.name && l.name.trim().length > 0;
+  });
+
+  // Group enabled labels by normalized prefix to prevent duplicates
+  var groups = [];
+  var groupByPrefix = {};
+
+  namedLabels.forEach(function (label) {
+    if (!config[label.id] || !config[label.id].enabled) return;
+
+    var prefix = (config[label.id].prefix || formatLabelPrefix(label.name)).trim();
+    var key = prefix.toLowerCase();
+
+    if (!groupByPrefix[key]) {
+      groupByPrefix[key] = {
+        id: label.id,
+        prefix: prefix,
+        color: label.color,
+        labelIds: []
+      };
+      groups.push(groupByPrefix[key]);
+    }
+    groupByPrefix[key].labelIds.push(label.id);
+  });
+
+  var visible = [];
+  groups.forEach(function (group) {
+    var count = 0;
+    allCards.forEach(function (card) {
+      if (card.idList !== listId) return;
+      if (card.id === currentCardId) return;
+      var hasMatch = card.labels.some(function (l) {
+        return group.labelIds.indexOf(l.id) !== -1;
+      });
+      if (hasMatch) count++;
+    });
+
+    if (count > 0) {
+      visible.push({
+        id: group.id,
+        prefix: group.prefix,
+        color: group.color,
+        count: count
+      });
+    }
+  });
+
+  return visible;
 }
 
 window.TrelloPowerUp.initialize({
@@ -60,26 +115,61 @@ window.TrelloPowerUp.initialize({
   'card-badges': function (t) {
     return Promise.all([
       t.card('id'),
-      t.list('id', 'cards'),
+      t.list('id'),
       t.board('labels'),
-      t.get('board', 'shared', 'targetCards')
-    ]).then(function ([currentCard, currentList, board, savedTargets]) {
-      var targetCards = savedTargets || {};
-      var isTopCard = currentList.cards && currentList.cards.length > 0 && currentList.cards[0].id === currentCard.id;
-      var isExplicitTarget = Object.keys(targetCards).some(function (listId) {
-        return targetCards[listId] === currentCard.id;
-      });
+      t.get('board', 'shared', 'targetCards'),
+      t.get('board', 'shared', 'labelConfig'),
+      t.cards('id', 'idList', 'labels')
+    ]).then(function ([currentCard, currentList, board, savedTargets, savedConfig, allCards]) {
+      var targets = savedTargets || {};
 
-      if (!isTopCard && !isExplicitTarget) {
+      // Only render on the card explicitly targeted for this list
+      if (targets[currentList.id] !== currentCard.id) {
         return [];
       }
 
-      var fixedLabels = board.labels
-        .filter(function (l) { return l.name && l.name.trim().length > 0; })
-        .slice()
-        .sort(function (a, b) { return a.id.localeCompare(b.id); });
+      var initialVisible = computeVisibleBadges(
+        currentList.id,
+        currentCard.id,
+        board.labels,
+        savedConfig,
+        allCards
+      );
 
-      return fixedLabels.map(function (boundLabel) {
+      var renderedSignature = initialVisible.map(function (b) { return b.id; }).join(',');
+
+      // If the list currently has 0 matching cards, keep 1 silent watcher so badges appear
+      // automatically the moment a labeled card is moved into this list
+      if (initialVisible.length === 0) {
+        return [
+          {
+            dynamic: function () {
+              return Promise.all([
+                t.list('id'),
+                t.board('labels'),
+                t.get('board', 'shared', 'targetCards'),
+                t.get('board', 'shared', 'labelConfig'),
+                t.cards('id', 'idList', 'labels')
+              ]).then(function ([list, liveBoard, liveTargets, liveConfig, liveCards]) {
+                if ((liveTargets || {})[list.id] !== currentCard.id) {
+                  return { refresh: 10 };
+                }
+                var nowVisible = computeVisibleBadges(list.id, currentCard.id, liveBoard.labels, liveConfig, liveCards);
+                var newSig = nowVisible.map(function (b) { return b.id; }).join(',');
+                var now = Date.now();
+                if (newSig !== '' && (!lastSyncByCard[currentCard.id] || now - lastSyncByCard[currentCard.id] > 3000)) {
+                  lastSyncByCard[currentCard.id] = now;
+                  t.set('card', 'shared', 'badgeSig', newSig);
+                }
+                return { refresh: 10 };
+              });
+            }
+          }
+        ];
+      }
+
+      // Return an array matching the EXACT number of visible badges—zero empty spacer slots
+      return initialVisible.map(function (badgeItem, idx) {
         return {
           dynamic: function () {
             return Promise.all([
@@ -88,58 +178,31 @@ window.TrelloPowerUp.initialize({
               t.get('board', 'shared', 'targetCards'),
               t.get('board', 'shared', 'labelConfig'),
               t.cards('id', 'idList', 'labels')
-            ]).then(function ([list, liveBoard, liveTargets, liveLabels, allCards]) {
-              var targets = liveTargets || {};
-              var config = liveLabels || {};
-
-              if (targets[list.id] !== currentCard.id) {
+            ]).then(function ([list, liveBoard, liveTargets, liveConfig, liveCards]) {
+              if ((liveTargets || {})[list.id] !== currentCard.id) {
                 return { refresh: 10 };
               }
 
-              if (!config[boundLabel.id] || !config[boundLabel.id].enabled) {
-                return { refresh: 10 };
-              }
+              var nowVisible = computeVisibleBadges(list.id, currentCard.id, liveBoard.labels, liveConfig, liveCards);
+              var newSig = nowVisible.map(function (b) { return b.id; }).join(',');
 
-              var liveLabelObj = liveBoard.labels.find(function (l) { return l.id === boundLabel.id; }) || boundLabel;
-              var prefix = (config[boundLabel.id].prefix || formatLabelPrefix(liveLabelObj.name)).trim();
-              var prefixKey = prefix.toLowerCase();
-
-              var sortedAll = liveBoard.labels
-                .filter(function (l) { return l.name && l.name.trim().length > 0; })
-                .slice()
-                .sort(function (a, b) { return a.id.localeCompare(b.id); });
-
-              var samePrefixIds = [];
-              sortedAll.forEach(function (l) {
-                if (config[l.id] && config[l.id].enabled) {
-                  var p = (config[l.id].prefix || formatLabelPrefix(l.name)).trim().toLowerCase();
-                  if (p === prefixKey) {
-                    samePrefixIds.push(l.id);
-                  }
+              // If a new label type entered or left the list, trigger a clean array rebuild
+              if (idx === 0 && newSig !== renderedSignature) {
+                var now = Date.now();
+                if (!lastSyncByCard[currentCard.id] || now - lastSyncByCard[currentCard.id] > 3000) {
+                  lastSyncByCard[currentCard.id] = now;
+                  t.set('card', 'shared', 'badgeSig', newSig);
                 }
-              });
-
-              if (samePrefixIds[0] !== boundLabel.id) {
-                return { refresh: 10 };
               }
 
-              var count = 0;
-              allCards.forEach(function (card) {
-                if (card.idList !== list.id) return;
-                if (card.id === currentCard.id) return;
-                var matches = card.labels.some(function (l) {
-                  return samePrefixIds.indexOf(l.id) !== -1;
-                });
-                if (matches) count++;
-              });
-
-              if (count === 0) {
+              var currentBadge = nowVisible.find(function (b) { return b.id === badgeItem.id; });
+              if (!currentBadge) {
                 return { refresh: 10 };
               }
 
               return {
-                text: prefix + ' - ' + count,
-                color: normalizeBadgeColor(liveLabelObj.color),
+                text: currentBadge.prefix + ' - ' + currentBadge.count,
+                color: normalizeBadgeColor(currentBadge.color),
                 refresh: 10
               };
             });
