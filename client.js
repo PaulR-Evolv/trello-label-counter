@@ -17,45 +17,61 @@ function normalizeBadgeColor(color) {
 
 function openSettingsPopup(t) {
   return t.popup({
-    title: 'Tracked Labels Settings',
+    title: 'Label Counter Settings',
     url: './settings.html',
-    height: 260
+    height: 420
   });
 }
 
 window.TrelloPowerUp.initialize({
-  // 1. Opens the label selection popup from the Power-Up's gear icon
   'show-settings': openSettingsPopup,
 
-  // 2. Card buttons to target a summary card or pick which labels to track
   'card-buttons': function (t) {
-    return t.get('card', 'shared', 'isCounterCard').then(function (isCounter) {
+    return Promise.all([
+      t.card('id', 'idList'),
+      t.get('board', 'shared', 'targetCards')
+    ]).then(function ([card, savedTargets]) {
+      var targetCards = savedTargets || {};
+      var isThisCardActive = targetCards[card.idList] === card.id;
+
       return [
         {
           icon: TRELLO_DEFAULT_ICON,
-          text: isCounter ? 'Disable List Label Counter' : 'Set as List Label Counter',
+          text: isThisCardActive ? 'Remove List Label Counter' : 'Set as List Label Counter',
           callback: function (t) {
-            return t.set('card', 'shared', 'isCounterCard', !isCounter).then(function () {
+            if (isThisCardActive) {
+              delete targetCards[card.idList];
+            } else {
+              targetCards[card.idList] = card.id;
+            }
+            return t.set('board', 'shared', 'targetCards', targetCards).then(function () {
               return t.closePopup();
             });
           }
         },
         {
           icon: TRELLO_DEFAULT_ICON,
-          text: 'Configure Tracked Labels',
+          text: 'Configure Lists & Labels',
           callback: openSettingsPopup
         }
       ];
     });
   },
 
-  // 3. Live badges displayed ONLY on designated top summary cards
   'card-badges': function (t) {
     return Promise.all([
       t.card('id'),
-      t.get('card', 'shared', 'isCounterCard')
-    ]).then(function ([currentCard, isCounter]) {
-      if (!isCounter) {
+      t.list('id', 'cards'),
+      t.get('board', 'shared', 'targetCards')
+    ]).then(function ([currentCard, currentList, savedTargets]) {
+      var targetCards = savedTargets || {};
+      var isTopCard = currentList.cards && currentList.cards.length > 0 && currentList.cards[0].id === currentCard.id;
+      var isExplicitTarget = Object.keys(targetCards).some(function (listId) {
+        return targetCards[listId] === currentCard.id;
+      });
+
+      // Only initialize polling on top cards or explicitly selected target cards
+      if (!isTopCard && !isExplicitTarget) {
         return [];
       }
 
@@ -65,10 +81,17 @@ window.TrelloPowerUp.initialize({
             return Promise.all([
               t.list('id'),
               t.board('labels'),
+              t.get('board', 'shared', 'targetCards'),
               t.get('board', 'shared', 'labelConfig'),
               t.cards('id', 'idList', 'labels')
-            ]).then(function ([currentList, board, labelConfig, allCards]) {
-              var config = labelConfig || {};
+            ]).then(function ([list, board, liveTargets, liveLabels, allCards]) {
+              var targets = liveTargets || {};
+              var config = liveLabels || {};
+
+              // Only display badges if this card is currently selected for this list
+              if (targets[list.id] !== currentCard.id) {
+                return { refresh: 10 };
+              }
 
               var activeLabels = board.labels.filter(function (label) {
                 return config[label.id] && config[label.id].enabled;
@@ -81,7 +104,7 @@ window.TrelloPowerUp.initialize({
 
               var count = 0;
               allCards.forEach(function (card) {
-                if (card.idList !== currentList.id) return;
+                if (card.idList !== list.id) return;
                 if (card.id === currentCard.id) return;
                 if (card.labels.some(function (l) { return l.id === targetLabel.id; })) {
                   count++;
