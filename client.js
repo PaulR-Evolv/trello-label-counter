@@ -74,7 +74,6 @@ window.TrelloPowerUp.initialize({
         return [];
       }
 
-      // Sort board labels deterministically by ID and lock each badge slot to one fixed label ID
       var fixedLabels = board.labels
         .filter(function (l) { return l.name && l.name.trim().length > 0; })
         .slice()
@@ -93,21 +92,18 @@ window.TrelloPowerUp.initialize({
               var targets = liveTargets || {};
               var config = liveLabels || {};
 
-              // Explicitly clear badge text if this card is not the active target
               if (targets[list.id] !== currentCard.id) {
-                return { text: '', refresh: 10 };
+                return { refresh: 10 };
               }
 
-              // Explicitly clear badge text if this specific label is unchecked
               if (!config[boundLabel.id] || !config[boundLabel.id].enabled) {
-                return { text: '', refresh: 10 };
+                return { refresh: 10 };
               }
 
               var liveLabelObj = liveBoard.labels.find(function (l) { return l.id === boundLabel.id; }) || boundLabel;
               var prefix = (config[boundLabel.id].prefix || formatLabelPrefix(liveLabelObj.name)).trim();
               var prefixKey = prefix.toLowerCase();
 
-              // Group any enabled labels that share the exact same banner prefix so duplicates never appear
               var sortedAll = liveBoard.labels
                 .filter(function (l) { return l.name && l.name.trim().length > 0; })
                 .slice()
@@ -123,9 +119,8 @@ window.TrelloPowerUp.initialize({
                 }
               });
 
-              // Only the primary label ID for this prefix renders the badge; any duplicate stays cleared
               if (samePrefixIds[0] !== boundLabel.id) {
-                return { text: '', refresh: 10 };
+                return { refresh: 10 };
               }
 
               var count = 0;
@@ -139,7 +134,7 @@ window.TrelloPowerUp.initialize({
               });
 
               if (count === 0) {
-                return { text: '', refresh: 10 };
+                return { refresh: 10 };
               }
 
               return {
