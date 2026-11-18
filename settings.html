@@ -3,53 +3,138 @@
 <head>
   <meta charset="UTF-8" />
   <title>Label Counter Settings</title>
-  <link rel="stylesheet" href="https://p.trellocdn.com/power-up.min.css" />
   <script src="https://p.trellocdn.com/power-up.min.js"></script>
   <style>
-    body { padding: 12px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    .hint { font-size: 12px; color: #5e6c84; margin-bottom: 10px; }
-    .label-row {
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 12px 14px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      background: #1d2125;
+      color: #b6c2cf;
+    }
+    body.light {
+      background: #ffffff;
+      color: #172b4d;
+    }
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #9fadbc;
+      margin: 4px 0 6px 0;
+    }
+    body.light .section-title { color: #5e6c84; }
+    .hint {
+      font-size: 11px;
+      color: #8c9bab;
+      margin-bottom: 8px;
+    }
+    .divider {
+      border: 0;
+      border-top: 1px solid #38414a;
+      margin: 14px 0 10px 0;
+    }
+    body.light .divider { border-top-color: #dfe1e6; }
+    .row {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 8px;
       padding: 6px 0;
-      border-bottom: 1px solid #ebecf0;
+      border-bottom: 1px solid #2c333a;
     }
-    .label-info { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+    body.light .row { border-bottom-color: #ebecf0; }
+    .check-area {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      min-width: 0;
+      cursor: pointer;
+    }
+    .check-area input[type="checkbox"] {
+      width: 15px;
+      height: 15px;
+      margin: 0;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
     .swatch {
-      width: 14px;
-      height: 14px;
+      width: 12px;
+      height: 12px;
       border-radius: 3px;
       flex-shrink: 0;
     }
-    .label-name {
+    .item-name {
       font-size: 13px;
       font-weight: 500;
+      color: #dee4ea;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .prefix-input {
-      width: 90px;
-      padding: 4px 6px;
+    body.light .item-name { color: #172b4d; }
+    .control-input {
+      width: 115px;
+      padding: 5px 7px;
       font-size: 12px;
-      margin: 0;
+      border-radius: 4px;
+      border: 1px solid #454f59;
+      background: #22272b;
+      color: #dee4ea;
+      flex-shrink: 0;
+    }
+    body.light .control-input {
+      border-color: #dfe1e6;
+      background: #f4f5f7;
+      color: #172b4d;
+    }
+    select.control-input {
+      width: 135px;
     }
     .actions {
       display: flex;
-      justify-content: flex-end;
-      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
       margin-top: 14px;
+      padding-top: 4px;
     }
+    .status-msg {
+      font-size: 12px;
+      color: #4bce97;
+    }
+    .save-btn {
+      background: #579dff;
+      color: #1d2125;
+      border: none;
+      border-radius: 4px;
+      padding: 7px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-left: auto;
+    }
+    .save-btn:hover { background: #85b8ff; }
   </style>
 </head>
 <body>
   <div id="content">
-    <div class="hint">Check the labels to track and set their short banner text:</div>
-    <div id="label-list">Loading board labels...</div>
+    <div class="section-title">1. Lists &amp; Top Counter Cards</div>
+    <div class="hint">Check a list and choose which card displays the count (defaults to the top card):</div>
+    <div id="list-container">Loading lists...</div>
+
+    <hr class="divider" />
+
+    <div class="section-title">2. Tracked Labels &amp; Banner Text</div>
+    <div class="hint">Check labels to count and customize their short banner text:</div>
+    <div id="label-container">Loading labels...</div>
+
     <div class="actions">
-      <button id="save-btn" class="mod-primary">Save Settings</button>
+      <span id="status" class="status-msg"></span>
+      <button id="save-btn" class="save-btn">Save Settings</button>
     </div>
   </div>
 
@@ -57,16 +142,20 @@
     /* global TrelloPowerUp */
     var t = TrelloPowerUp.iframe();
 
+    if (t.getContext().theme === 'light') {
+      document.body.classList.add('light');
+    }
+
     var COLOR_MAP = {
-      green: '#61bd4f', yellow: '#f2d600', orange: '#ff9f1a', red: '#eb5a46',
-      purple: '#c377e0', blue: '#0079bf', sky: '#00c2e0', lime: '#51e898',
-      pink: '#ff78cb', black: '#344563'
+      green: '#4bce97', yellow: '#f5cd47', orange: '#fea362', red: '#f87168',
+      purple: '#9f8fef', blue: '#579dff', sky: '#6cc3e0', lime: '#94c748',
+      pink: '#e774bb', black: '#8c9bab'
     };
 
     function getHexColor(trelloColor) {
-      if (!trelloColor) return '#b3bac5';
+      if (!trelloColor) return '#8c9bab';
       var base = trelloColor.replace(/_(dark|light)$/, '');
-      return COLOR_MAP[base] || '#b3bac5';
+      return COLOR_MAP[base] || '#8c9bab';
     }
 
     function defaultPrefix(name) {
@@ -75,58 +164,163 @@
     }
 
     Promise.all([
+      t.lists('id', 'name'),
+      t.cards('id', 'name', 'idList'),
       t.board('labels'),
+      t.get('board', 'shared', 'targetCards'),
       t.get('board', 'shared', 'labelConfig')
-    ]).then(function ([board, savedConfig]) {
-      var config = savedConfig || {};
-      var container = document.getElementById('label-list');
-      container.innerHTML = '';
+    ]).then(function ([lists, allCards, board, savedTargets, savedLabels]) {
+      var targetCards = savedTargets || {};
+      var labelConfig = savedLabels || {};
+
+      // Group cards by list in top-to-bottom order
+      var cardsByList = {};
+      allCards.forEach(function (card) {
+        if (!cardsByList[card.idList]) cardsByList[card.idList] = [];
+        cardsByList[card.idList].push(card);
+      });
+
+      // Render Section 1: Lists & Target Top Cards
+      var listContainer = document.getElementById('list-container');
+      listContainer.innerHTML = '';
+
+      lists.forEach(function (list) {
+        var listCards = cardsByList[list.id] || [];
+        var selectedCardId = targetCards[list.id] || '';
+        var isListEnabled = !!selectedCardId;
+
+        var row = document.createElement('div');
+        row.className = 'row';
+
+        var left = document.createElement('label');
+        left.className = 'check-area';
+
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.setAttribute('data-list-id', list.id);
+        cb.checked = isListEnabled;
+        cb.disabled = listCards.length === 0;
+
+        var nameSpan = document.createElement('span');
+        nameSpan.className = 'item-name';
+        nameSpan.title = list.name;
+        nameSpan.textContent = list.name;
+
+        left.appendChild(cb);
+        left.appendChild(nameSpan);
+
+        var select = document.createElement('select');
+        select.className = 'control-input';
+        select.setAttribute('data-card-for-list', list.id);
+
+        if (listCards.length === 0) {
+          var emptyOpt = document.createElement('option');
+          emptyOpt.value = '';
+          emptyOpt.textContent = '(Empty list)';
+          select.appendChild(emptyOpt);
+          select.disabled = true;
+        } else {
+          listCards.forEach(function (card, idx) {
+            var opt = document.createElement('option');
+            opt.value = card.id;
+            opt.textContent = (idx === 0 ? '★ ' : '') + card.name;
+            if (selectedCardId ? card.id === selectedCardId : idx === 0) {
+              opt.selected = true;
+            }
+            select.appendChild(opt);
+          });
+        }
+
+        row.appendChild(left);
+        row.appendChild(select);
+        listContainer.appendChild(row);
+      });
+
+      // Render Section 2: Labels & Banner Text
+      var labelContainer = document.getElementById('label-container');
+      labelContainer.innerHTML = '';
 
       var namedLabels = board.labels.filter(function (l) {
         return l.name && l.name.trim().length > 0;
       });
 
       if (namedLabels.length === 0) {
-        container.innerHTML = '<p class="hint">No named labels found on this board yet. Create labels in Trello first, then reopen this menu.</p>';
-        t.sizeTo('#content');
-        return;
+        labelContainer.innerHTML = '<div class="hint">No named labels found on this board yet.</div>';
+      } else {
+        namedLabels.forEach(function (label) {
+          var isChecked = !!(labelConfig[label.id] && labelConfig[label.id].enabled);
+          var prefixVal = (labelConfig[label.id] && labelConfig[label.id].prefix) || defaultPrefix(label.name);
+
+          var row = document.createElement('div');
+          row.className = 'row';
+
+          var left = document.createElement('label');
+          left.className = 'check-area';
+
+          var cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.setAttribute('data-label-id', label.id);
+          cb.checked = isChecked;
+
+          var swatch = document.createElement('span');
+          swatch.className = 'swatch';
+          swatch.style.background = getHexColor(label.color);
+
+          var nameSpan = document.createElement('span');
+          nameSpan.className = 'item-name';
+          nameSpan.title = label.name;
+          nameSpan.textContent = label.name;
+
+          left.appendChild(cb);
+          left.appendChild(swatch);
+          left.appendChild(nameSpan);
+
+          var input = document.createElement('input');
+          input.type = 'text';
+          input.className = 'control-input';
+          input.setAttribute('data-prefix-for', label.id);
+          input.value = prefixVal;
+          input.placeholder = 'Banner text';
+
+          row.appendChild(left);
+          row.appendChild(input);
+          labelContainer.appendChild(row);
+        });
       }
-
-      namedLabels.forEach(function (label) {
-        var isChecked = !!(config[label.id] && config[label.id].enabled);
-        var prefixVal = (config[label.id] && config[label.id].prefix) || defaultPrefix(label.name);
-
-        var row = document.createElement('div');
-        row.className = 'label-row';
-        row.innerHTML =
-          '<label class="label-info">' +
-            '<input type="checkbox" data-id="' + label.id + '" ' + (isChecked ? 'checked' : '') + ' />' +
-            '<span class="swatch" style="background:' + getHexColor(label.color) + '"></span>' +
-            '<span class="label-name" title="' + label.name + '">' + label.name + '</span>' +
-          '</label>' +
-          '<input type="text" class="prefix-input" data-prefix-for="' + label.id + '" value="' + prefixVal + '" placeholder="Banner text" />';
-
-        container.appendChild(row);
-      });
 
       t.sizeTo('#content');
     });
 
     document.getElementById('save-btn').addEventListener('click', function () {
-      var newConfig = {};
-      var checkboxes = document.querySelectorAll('input[type="checkbox"][data-id]');
+      var newTargets = {};
+      document.querySelectorAll('input[type="checkbox"][data-list-id]').forEach(function (cb) {
+        if (cb.checked) {
+          var listId = cb.getAttribute('data-list-id');
+          var select = document.querySelector('select[data-card-for-list="' + listId + '"]');
+          if (select && select.value) {
+            newTargets[listId] = select.value;
+          }
+        }
+      });
 
-      checkboxes.forEach(function (cb) {
-        var id = cb.getAttribute('data-id');
-        var prefixInput = document.querySelector('input[data-prefix-for="' + id + '"]');
-        newConfig[id] = {
+      var newLabels = {};
+      document.querySelectorAll('input[type="checkbox"][data-label-id]').forEach(function (cb) {
+        var labelId = cb.getAttribute('data-label-id');
+        var input = document.querySelector('input[data-prefix-for="' + labelId + '"]');
+        newLabels[labelId] = {
           enabled: cb.checked,
-          prefix: prefixInput ? prefixInput.value.trim() : ''
+          prefix: input ? input.value.trim() : ''
         };
       });
 
-      t.set('board', 'shared', 'labelConfig', newConfig).then(function () {
-        return t.closePopup();
+      Promise.all([
+        t.set('board', 'shared', 'targetCards', newTargets),
+        t.set('board', 'shared', 'labelConfig', newLabels)
+      ]).then(function () {
+        document.getElementById('status').textContent = 'Saved!';
+        setTimeout(function () {
+          t.closePopup();
+        }, 300);
       });
     });
   </script>
