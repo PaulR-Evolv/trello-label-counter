@@ -1,6 +1,7 @@
 /* global TrelloPowerUp */
 
 var TRELLO_DEFAULT_ICON = 'https://p.trellocdn.com/apple-touch-icon-152x152-precomposed.png';
+var lastWriteTimestamp = {};
 
 function formatLabelPrefix(labelName) {
   if (!labelName) return 'Label';
@@ -20,6 +21,67 @@ function openSettingsPopup(t) {
     url: './settings.html',
     height: 420
   });
+}
+
+// Returns ONLY enabled labels with count > 0 in consistent board-label order
+function getActiveBadges(listId, currentCardId, boardLabels, targetCards, labelConfig, allCards) {
+  var targets = targetCards || {};
+  if (targets[listId] !== currentCardId) {
+    return [];
+  }
+
+  var config = labelConfig || {};
+  var namedLabels = (boardLabels || []).filter(function (l) {
+    return l.name && l.name.trim().length > 0;
+  });
+
+  var groups = [];
+  var groupByPrefix = {};
+
+  namedLabels.forEach(function (label) {
+    if (!config[label.id] || !config[label.id].enabled) return;
+
+    var prefix = (config[label.id].prefix || formatLabelPrefix(label.name)).trim();
+    var key = prefix.toLowerCase();
+
+    if (!groupByPrefix[key]) {
+      groupByPrefix[key] = {
+        prefix: prefix,
+        color: normalizeBadgeColor(label.color),
+        labelIds: []
+      };
+      groups.push(groupByPrefix[key]);
+    }
+    groupByPrefix[key].labelIds.push(label.id);
+  });
+
+  var badges = [];
+  groups.forEach(function (group) {
+    var count = 0;
+    allCards.forEach(function (card) {
+      if (card.idList !== listId) return;
+      if (card.id === currentCardId) return;
+      var hasMatch = card.labels.some(function (l) {
+        return group.labelIds.indexOf(l.id) !== -1;
+      });
+      if (hasMatch) count++;
+    });
+
+    if (count > 0) {
+      badges.push({
+        text: group.prefix + ' - ' + count,
+        color: group.color
+      });
+    }
+  });
+
+  return badges;
+}
+
+function serializeBadges(badges) {
+  return badges.map(function (b) {
+    return b.text + ':' + b.color;
+  }).join('|');
 }
 
 window.TrelloPowerUp.initialize({
@@ -62,91 +124,71 @@ window.TrelloPowerUp.initialize({
       t.card('id'),
       t.list('id', 'cards'),
       t.board('labels'),
-      t.get('board', 'shared', 'targetCards')
-    ]).then(function ([currentCard, currentList, board, savedTargets]) {
-      var targetCards = savedTargets || {};
+      t.get('board', 'shared', 'targetCards'),
+      t.get('board', 'shared', 'labelConfig'),
+      t.cards('id', 'idList', 'labels')
+    ]).then(function ([currentCard, currentList, board, savedTargets, savedConfig, allCards]) {
+      var targets = savedTargets || {};
       var isTopCard = currentList.cards && currentList.cards.length > 0 && currentList.cards[0].id === currentCard.id;
-      var isExplicitTarget = Object.keys(targetCards).some(function (listId) {
-        return targetCards[listId] === currentCard.id;
-      });
+      var isExplicitTarget = targets[currentList.id] === currentCard.id;
 
       if (!isTopCard && !isExplicitTarget) {
         return [];
       }
 
-      var fixedLabels = board.labels
-        .filter(function (l) { return l.name && l.name.trim().length > 0; })
-        .slice()
-        .sort(function (a, b) { return a.id.localeCompare(b.id); });
+      var currentBadges = getActiveBadges(
+        currentList.id,
+        currentCard.id,
+        board.labels,
+        targets,
+        savedConfig,
+        allCards
+      );
 
-      return fixedLabels.map(function (boundLabel) {
+      var renderedSignature = serializeBadges(currentBadges);
+
+      // Render ONLY active non-zero badges (zero empty pills or leading spacers)
+      var result = currentBadges.map(function (b) {
         return {
-          dynamic: function () {
-            return Promise.all([
-              t.list('id'),
-              t.board('labels'),
-              t.get('board', 'shared', 'targetCards'),
-              t.get('board', 'shared', 'labelConfig'),
-              t.cards('id', 'idList', 'labels')
-            ]).then(function ([list, liveBoard, liveTargets, liveLabels, allCards]) {
-              var targets = liveTargets || {};
-              var config = liveLabels || {};
-
-              if (targets[list.id] !== currentCard.id) {
-                return { text: '', refresh: 10 };
-              }
-
-              if (!config[boundLabel.id] || !config[boundLabel.id].enabled) {
-                return { text: '', refresh: 10 };
-              }
-
-              var liveLabelObj = liveBoard.labels.find(function (l) { return l.id === boundLabel.id; }) || boundLabel;
-              var prefix = (config[boundLabel.id].prefix || formatLabelPrefix(liveLabelObj.name)).trim();
-              var prefixKey = prefix.toLowerCase();
-
-              var sortedAll = liveBoard.labels
-                .filter(function (l) { return l.name && l.name.trim().length > 0; })
-                .slice()
-                .sort(function (a, b) { return a.id.localeCompare(b.id); });
-
-              var samePrefixIds = [];
-              sortedAll.forEach(function (l) {
-                if (config[l.id] && config[l.id].enabled) {
-                  var p = (config[l.id].prefix || formatLabelPrefix(l.name)).trim().toLowerCase();
-                  if (p === prefixKey) {
-                    samePrefixIds.push(l.id);
-                  }
-                }
-              });
-
-              if (samePrefixIds[0] !== boundLabel.id) {
-                return { text: '', refresh: 10 };
-              }
-
-              var count = 0;
-              allCards.forEach(function (card) {
-                if (card.idList !== list.id) return;
-                if (card.id === currentCard.id) return;
-                var matches = card.labels.some(function (l) {
-                  return samePrefixIds.indexOf(l.id) !== -1;
-                });
-                if (matches) count++;
-              });
-
-              // Explicitly pass text: '' when count hits 0 so deleted/moved cards clear immediately
-              if (count === 0) {
-                return { text: '', refresh: 10 };
-              }
-
-              return {
-                text: prefix + ' - ' + count,
-                color: normalizeBadgeColor(liveLabelObj.color),
-                refresh: 10
-              };
-            });
-          }
+          text: b.text,
+          color: b.color
         };
       });
+
+      // Single trailing watcher triggers a full clean rebuild whenever any count changes
+      result.push({
+        dynamic: function () {
+          return Promise.all([
+            t.list('id'),
+            t.board('labels'),
+            t.get('board', 'shared', 'targetCards'),
+            t.get('board', 'shared', 'labelConfig'),
+            t.cards('id', 'idList', 'labels')
+          ]).then(function ([list, liveBoard, liveTargets, liveConfig, liveCards]) {
+            var latestBadges = getActiveBadges(
+              list.id,
+              currentCard.id,
+              liveBoard.labels,
+              liveTargets,
+              liveConfig,
+              liveCards
+            );
+            var latestSignature = serializeBadges(latestBadges);
+
+            if (latestSignature !== renderedSignature) {
+              var now = Date.now();
+              if (!lastWriteTimestamp[currentCard.id] || now - lastWriteTimestamp[currentCard.id] > 3000) {
+                lastWriteTimestamp[currentCard.id] = now;
+                t.set('card', 'shared', 'counterState', latestSignature);
+              }
+            }
+
+            return { refresh: 10 };
+          });
+        }
+      });
+
+      return result;
     });
   }
 });
