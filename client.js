@@ -1,7 +1,6 @@
 /* global TrelloPowerUp */
 
 var TRELLO_DEFAULT_ICON = 'https://p.trellocdn.com/apple-touch-icon-152x152-precomposed.png';
-var lastWriteTimestamp = {};
 
 function formatLabelPrefix(labelName) {
   if (!labelName) return 'Label';
@@ -23,13 +22,8 @@ function openSettingsPopup(t) {
   });
 }
 
-// Returns ONLY enabled labels with count > 0 in exact board-label order
-function getActiveBadges(listId, currentCardId, boardLabels, targetCards, labelConfig, allCards) {
-  var targets = targetCards || {};
-  if (targets[listId] !== currentCardId) {
-    return [];
-  }
-
+// Builds the ordered list of ALL checked labels (regardless of whether count is 0 or higher)
+function getEnabledLabelGroups(boardLabels, labelConfig) {
   var config = labelConfig || {};
   var namedLabels = (boardLabels || []).filter(function (l) {
     return l.name && l.name.trim().length > 0;
@@ -55,33 +49,7 @@ function getActiveBadges(listId, currentCardId, boardLabels, targetCards, labelC
     groupByPrefix[key].labelIds.push(label.id);
   });
 
-  var badges = [];
-  groups.forEach(function (group) {
-    var count = 0;
-    allCards.forEach(function (card) {
-      if (card.idList !== listId) return;
-      if (card.id === currentCardId) return;
-      var hasMatch = card.labels.some(function (l) {
-        return group.labelIds.indexOf(l.id) !== -1;
-      });
-      if (hasMatch) count++;
-    });
-
-    if (count > 0) {
-      badges.push({
-        text: group.prefix + ' - ' + count,
-        color: group.color
-      });
-    }
-  });
-
-  return badges;
-}
-
-function serializeBadges(badges) {
-  return badges.map(function (b) {
-    return b.text + ':' + b.color;
-  }).join('|');
+  return groups;
 }
 
 window.TrelloPowerUp.initialize({
@@ -122,93 +90,46 @@ window.TrelloPowerUp.initialize({
   'card-badges': function (t) {
     return Promise.all([
       t.card('id'),
-      t.list('id', 'cards'),
+      t.list('id'),
       t.board('labels'),
       t.get('board', 'shared', 'targetCards'),
-      t.get('board', 'shared', 'labelConfig'),
-      t.cards('id', 'idList', 'labels')
-    ]).then(function ([currentCard, currentList, board, savedTargets, savedConfig, allCards]) {
+      t.get('board', 'shared', 'labelConfig')
+    ]).then(function ([currentCard, currentList, board, savedTargets, savedConfig]) {
       var targets = savedTargets || {};
-      var isTopCard = currentList.cards && currentList.cards.length > 0 && currentList.cards[0].id === currentCard.id;
-      var isExplicitTarget = targets[currentList.id] === currentCard.id;
 
-      if (!isTopCard && !isExplicitTarget) {
+      // Only render on the card explicitly selected for this list
+      if (targets[currentList.id] !== currentCard.id) {
         return [];
       }
 
-      var currentBadges = getActiveBadges(
-        currentList.id,
-        currentCard.id,
-        board.labels,
-        targets,
-        savedConfig,
-        allCards
-      );
+      var groups = getEnabledLabelGroups(board.labels, savedConfig);
 
-      var renderedSignature = serializeBadges(currentBadges);
-
-      function triggerRebuildIfChanged(latestSignature) {
-        if (latestSignature !== renderedSignature) {
-          var now = Date.now();
-          if (!lastWriteTimestamp[currentCard.id] || now - lastWriteTimestamp[currentCard.id] > 2500) {
-            lastWriteTimestamp[currentCard.id] = now;
-            t.set('card', 'shared', 'counterState', latestSignature);
-          }
-        }
-      }
-
-      // If no matching cards are in the list yet, keep 1 watcher until a labeled card arrives
-      if (currentBadges.length === 0) {
-        return [
-          {
-            dynamic: function () {
-              return Promise.all([
-                t.list('id'),
-                t.board('labels'),
-                t.get('board', 'shared', 'targetCards'),
-                t.get('board', 'shared', 'labelConfig'),
-                t.cards('id', 'idList', 'labels')
-              ]).then(function ([list, liveBoard, liveTargets, liveConfig, liveCards]) {
-                var latestBadges = getActiveBadges(list.id, currentCard.id, liveBoard.labels, liveTargets, liveConfig, liveCards);
-                triggerRebuildIfChanged(serializeBadges(latestBadges));
-                return { refresh: 10 };
-              });
-            }
-          }
-        ];
-      }
-
-      // Attach the 10-second poller to the FIRST real badge so zero extra empty slots exist
-      return currentBadges.map(function (badge, index) {
-        if (index === 0) {
-          return {
-            dynamic: function () {
-              return Promise.all([
-                t.list('id'),
-                t.board('labels'),
-                t.get('board', 'shared', 'targetCards'),
-                t.get('board', 'shared', 'labelConfig'),
-                t.cards('id', 'idList', 'labels')
-              ]).then(function ([list, liveBoard, liveTargets, liveConfig, liveCards]) {
-                var latestBadges = getActiveBadges(list.id, currentCard.id, liveBoard.labels, liveTargets, liveConfig, liveCards);
-                triggerRebuildIfChanged(serializeBadges(latestBadges));
-
-                if (!latestBadges[0]) {
-                  return { text: '', refresh: 10 };
-                }
-                return {
-                  text: latestBadges[0].text,
-                  color: latestBadges[0].color,
-                  refresh: 10
-                };
-              });
-            }
-          };
-        }
-
+      // Every checked label gets a permanent badge slot that always displays "PREFIX - <count>" (including 0)
+      return groups.map(function (group) {
         return {
-          text: badge.text,
-          color: badge.color
+          dynamic: function () {
+            return Promise.all([
+              t.list('id'),
+              t.cards('id', 'idList', 'labels')
+            ]).then(function ([list, allCards]) {
+              var count = 0;
+
+              allCards.forEach(function (card) {
+                if (card.idList !== list.id) return;
+                if (card.id === currentCard.id) return;
+                var hasMatch = card.labels.some(function (l) {
+                  return group.labelIds.indexOf(l.id) !== -1;
+                });
+                if (hasMatch) count++;
+              });
+
+              return {
+                text: group.prefix + ' - ' + count,
+                color: group.color,
+                refresh: 10
+              };
+            });
+          }
         };
       });
     });
