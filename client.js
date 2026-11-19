@@ -23,7 +23,7 @@ function openSettingsPopup(t) {
   });
 }
 
-// Returns ONLY enabled labels with count > 0 in consistent board-label order
+// Returns ONLY enabled labels with count > 0 in exact board-label order
 function getActiveBadges(listId, currentCardId, boardLabels, targetCards, labelConfig, allCards) {
   var targets = targetCards || {};
   if (targets[listId] !== currentCardId) {
@@ -147,48 +147,70 @@ window.TrelloPowerUp.initialize({
 
       var renderedSignature = serializeBadges(currentBadges);
 
-      // Render ONLY active non-zero badges (zero empty pills or leading spacers)
-      var result = currentBadges.map(function (b) {
+      function triggerRebuildIfChanged(latestSignature) {
+        if (latestSignature !== renderedSignature) {
+          var now = Date.now();
+          if (!lastWriteTimestamp[currentCard.id] || now - lastWriteTimestamp[currentCard.id] > 2500) {
+            lastWriteTimestamp[currentCard.id] = now;
+            t.set('card', 'shared', 'counterState', latestSignature);
+          }
+        }
+      }
+
+      // If no matching cards are in the list yet, keep 1 watcher until a labeled card arrives
+      if (currentBadges.length === 0) {
+        return [
+          {
+            dynamic: function () {
+              return Promise.all([
+                t.list('id'),
+                t.board('labels'),
+                t.get('board', 'shared', 'targetCards'),
+                t.get('board', 'shared', 'labelConfig'),
+                t.cards('id', 'idList', 'labels')
+              ]).then(function ([list, liveBoard, liveTargets, liveConfig, liveCards]) {
+                var latestBadges = getActiveBadges(list.id, currentCard.id, liveBoard.labels, liveTargets, liveConfig, liveCards);
+                triggerRebuildIfChanged(serializeBadges(latestBadges));
+                return { refresh: 10 };
+              });
+            }
+          }
+        ];
+      }
+
+      // Attach the 10-second poller to the FIRST real badge so zero extra empty slots exist
+      return currentBadges.map(function (badge, index) {
+        if (index === 0) {
+          return {
+            dynamic: function () {
+              return Promise.all([
+                t.list('id'),
+                t.board('labels'),
+                t.get('board', 'shared', 'targetCards'),
+                t.get('board', 'shared', 'labelConfig'),
+                t.cards('id', 'idList', 'labels')
+              ]).then(function ([list, liveBoard, liveTargets, liveConfig, liveCards]) {
+                var latestBadges = getActiveBadges(list.id, currentCard.id, liveBoard.labels, liveTargets, liveConfig, liveCards);
+                triggerRebuildIfChanged(serializeBadges(latestBadges));
+
+                if (!latestBadges[0]) {
+                  return { text: '', refresh: 10 };
+                }
+                return {
+                  text: latestBadges[0].text,
+                  color: latestBadges[0].color,
+                  refresh: 10
+                };
+              });
+            }
+          };
+        }
+
         return {
-          text: b.text,
-          color: b.color
+          text: badge.text,
+          color: badge.color
         };
       });
-
-      // Single trailing watcher triggers a full clean rebuild whenever any count changes
-      result.push({
-        dynamic: function () {
-          return Promise.all([
-            t.list('id'),
-            t.board('labels'),
-            t.get('board', 'shared', 'targetCards'),
-            t.get('board', 'shared', 'labelConfig'),
-            t.cards('id', 'idList', 'labels')
-          ]).then(function ([list, liveBoard, liveTargets, liveConfig, liveCards]) {
-            var latestBadges = getActiveBadges(
-              list.id,
-              currentCard.id,
-              liveBoard.labels,
-              liveTargets,
-              liveConfig,
-              liveCards
-            );
-            var latestSignature = serializeBadges(latestBadges);
-
-            if (latestSignature !== renderedSignature) {
-              var now = Date.now();
-              if (!lastWriteTimestamp[currentCard.id] || now - lastWriteTimestamp[currentCard.id] > 3000) {
-                lastWriteTimestamp[currentCard.id] = now;
-                t.set('card', 'shared', 'counterState', latestSignature);
-              }
-            }
-
-            return { refresh: 10 };
-          });
-        }
-      });
-
-      return result;
     });
   }
 });
